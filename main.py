@@ -93,7 +93,7 @@ async def get_message(message: types.Message, album: list[types.Message] = None,
             return await message.answer("Что-то пошло не так...")
 
     await message.answer('Следующие фото были успешно загружены...')
-    await message.answer_media_group(media_group)
+    # await message.answer_media_group(media_group)
 
     await state.update_data(photos=media_group)
     await message.answer('Выбери тип карточки:', reply_markup=card_type_kb)
@@ -118,22 +118,22 @@ async def set_type_friend_is(call, state):
 async def request_descriptions(message: types.Message, state):
     data = await state.get_data()
     photos = data['photos']
-
-    descriptions = []
     if photos:
         first_photo = photos.media[0]['media']
         photos.media.remove(photos.media[0])
         await state.update_data(photos=photos)
         await PhotoState.descriptions.set()
         await send_photo(message, first_photo)
-        # descriptions.append(desc)
     else:
         await message.answer('🚫 Нет фотографий для обработки.')
-    await state.update_data(descriptions=descriptions)
+    # await state.update_data(descriptions=desc)
+    # data = await state.get_data()
+    # print(data['descriptions'])
 
 
 async def send_photo(message: types.Message, photo: str):
     await PhotoState.waiting_for_description.set()
+
     file_path = f'UserFiles/Photos/{photo}.jpg'
     with open(file_path, 'rb') as img:
         await message.answer_photo(img, caption='Напиши подпись для этого фото')
@@ -158,19 +158,26 @@ async def send_photo(message: types.Message, photo: str):
 async def process_confirmation(message: types.Message, state):
     data = await state.get_data()
     current_photos = data.get('photos', [])
+    desc = {}
 
     if current_photos.media:
+
         next_photo = current_photos.media[0]['media']
         current_photos.media.remove(current_photos.media[0])
-        # next_photo = current_photos.media[0]['media']
+        desc[next_photo] = message.text
+
+        print(f'next_photo {next_photo}')
+        print(f'message.text {message.text}')
+        print(f'desc {desc}')
+
         await state.update_data(photos=current_photos)
-        await state.update_data(descriptions={next_photo: message.text})
+        # await state.update_data(descriptions=descriptions)
         await send_photo(message, next_photo)
 
     else:
         await message.answer('🚫 Все фотографии были обработаны.', reply_markup=start_kb)
-        data = await state.get_data()
-        print(data['descriptions'])
+        # print(data['descriptions'])
+
         await state.finish()  # Завершаем состояние
 
 
