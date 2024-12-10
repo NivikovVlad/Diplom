@@ -1,15 +1,20 @@
+from __future__ import annotations
+import asyncio
 import os
+from pprint import pprint
+from typing import Union, List
 import aiogram.utils.markdown as md
 from aiogram import Bot, Dispatcher, types
 from aiogram.contrib.fsm_storage.memory import MemoryStorage
 from aiogram.dispatcher.filters.state import State, StatesGroup
+from aiogram.dispatcher.handler import CancelHandler
+from aiogram.dispatcher.middlewares import BaseMiddleware
+from aiogram.types import InputMedia
 from aiogram.utils import executor
 from aiogram.utils.exceptions import Unauthorized
-import pil
 import process_photo
 from api_key import api
 from keyboards import *
-
 
 bot_token = api
 bot = Bot(token=bot_token)
@@ -17,9 +22,39 @@ dp = Dispatcher(bot, storage=MemoryStorage())
 
 
 class PhotoState(StatesGroup):
+    waiting_for_description = State()
     photos = State()
+    type_card = State()
     descriptions = State()
     process = State()
+
+
+class AlbumMiddleware(BaseMiddleware):
+    album_data: dict = {}
+
+    def __init__(self, latency: int | float = 0.01):
+        self.latency = latency
+        super().__init__()
+
+    async def on_process_message(self, message: types.Message, data: dict):
+        if not message.media_group_id:
+            return
+
+        try:
+            self.album_data[message.media_group_id].append(message)
+            raise CancelHandler()
+        except KeyError:
+            self.album_data[message.media_group_id] = [message]
+            await asyncio.sleep(self.latency)
+
+            message.conf["is_last"] = True
+            data["album"] = self.album_data[message.media_group_id]
+
+    async def on_post_process_message(self, message: types.Message, result: dict, data: dict):
+        if message.media_group_id and message.conf.get("is_last"):
+            del self.album_data[message.media_group_id]
+        else:
+            return
 
 
 @dp.message_handler(commands=['start'])
@@ -34,75 +69,103 @@ async def photo_download(message: types.Message):
     await PhotoState.photos.set()
 
 
-@dp.message_handler(content_types=['photo'], state=PhotoState.photos)
-async def get_photo(message: types.Message, state):
-    # Получение информации о загруженном фото
-    file_info = await bot.get_file(message.photo[-1].file_id)
-    file_path = f'UserFiles/Photos/{file_info.file_unique_id}.jpg'
+@dp.message_handler(content_types=types.ContentType.ANY, state=PhotoState.photos)
+async def get_message(message: types.Message, album: list[types.Message] = None, state=None):
+    if not album:
+        album = [message]
 
-    if os.path.exists('UserFiles/Photos/' + file_info.file_unique_id + '.jpg'):
-        pass
-    else:
-        await message.photo[-1].download('UserFiles/Photos/' + file_info.file_unique_id + '.jpg')
+    media_group = types.MediaGroup()
+    for file in album:
+        if file.photo:
+            file_id = file.photo[-1].file_id
+        else:
+            continue
+
+        try:
+            file_path = f'UserFiles/Photos/{file_id}.jpg'
+            if os.path.exists(file_path):
+                pass
+            else:
+                await file.photo[-1].download(file_path)
+            media_group.attach(InputMedia(media=file_id, type=file.content_type))
+            # media_group.attach({"file": file_id, "type": file.content_type})
+        except ValueError:
+            return await message.answer("Что-то пошло не так...")
+
+    await message.answer('Следующие фото были успешно загружены...')
+    await message.answer_media_group(media_group)
+
+    await state.update_data(photos=media_group)
+    await message.answer('Выбери тип карточки:', reply_markup=card_type_kb)
+    await PhotoState.type_card.set()
 
 
-    print(file_path)
-    await state.update_data(photos=file_path)
-    # await message.photo[-1].download(file_path)
-    await message.answer('Напиши подпись к следующей фотографии:')
+@dp.callback_query_handler(text=['love_is'], state=PhotoState.type_card)
+async def set_type_love_is(call, state):
+    await state.update_data(type_card='love_is')
+    await call.message.answer('Выбран тип карточки: "Love is..."', reply_markup=next_kb)
     await PhotoState.descriptions.set()
 
 
-@dp.message_handler(state=PhotoState.descriptions)
-async def request_caption(message: types.Message, state):
-    # Получить подпись из сообщения
-    photo_description = str(message.text.strip())
+@dp.callback_query_handler(text=['friend_is'], state=PhotoState.type_card)
+async def set_type_friend_is(call, state):
+    await state.update_data(type_card='friend_is')
+    await call.message.answer('Выбран тип карточки: "Friend is..."', reply_markup=next_kb)
+    await PhotoState.descriptions.set()
+
+
+@dp.message_handler(text=['Продолжить'], state=PhotoState.descriptions)
+async def request_descriptions(message: types.Message, state):
+
     data = await state.get_data()
-    current_photo_id = data['photos']
-    # Получить ID текущей фотографии
-
-    await state.update_data(descriptions={str(current_photo_id): photo_description})
-    await message.answer('Все готово, продолжаем?', reply_markup=next_kb)
-    await PhotoState.process.set()
-
-
-@dp.message_handler(text=['Обработать'], state=PhotoState.process)
-async def check(message: types.Message, state):
-    try:
-        # Получить список файлов фотографий
-        photo_list = os.listdir('UserFiles/Photos')
-        data = await state.get_data()
-        photo_descriptions = data['descriptions']
-
-        # Обработка каждой фотографии
-        for photo_id, photo_description in photo_descriptions.items():
-            # Удалить метаданные из фотографии
-            process_photo.remove_metadata(str(photo_id))
-            # Добавить подпись
-            process_photo.add_caption(str(photo_id), photo_description)
-
-            # Отправить обработанную фотографию пользователю
-            with open(photo_id, 'rb') as photo:
-                await message.answer_photo(photo, caption='📸 Твоя обработанная фотография.')
+    photos = data['photos']
+    for i in range(0, len(photos.media)):
+        file_path = f'UserFiles/Photos/{photos.media[i]["media"]}.jpg'
+        with open(file_path, 'rb') as img:
+            await message.answer_photo(img, 'Напиши подпись к следующей фотографии:')
+            await PhotoState.waiting_for_description.set()
+        # photo_description = str(message.text.strip())
+        # await state.update_data(descriptions={file_path: photo_description})
 
 
-        # Удалить все файлы фотографий
-        for photo in photo_list:
-            os.remove(f'UserFiles/Photos/{photo}')
+@dp.message_handler(state=PhotoState.waiting_for_description)
+async def set_descriptions(message: types.Message, state):
+    photo_description = message.text.strip()
+    await state.update_data(descriptions={photo_description: photo_description})
+    await PhotoState.descriptions.set()
 
-        # Сообщение об успешной обработке
-        await message.answer('✅ Все фотографии успешно обработаны!', reply_markup=start_kb)
 
-    except Unauthorized:
-        # Сообщение об ошибке авторизации
-        await message.answer('🚫 У меня нет разрешения на доступ к твоим фото. Попробуй переустановить бота.')
-
-    finally:
-        # Переход в начальное состояние
-        await state.finish()
+# @dp.message_handler(text=['Обработать'], state=PhotoState.process)
+# async def check(message: types.Message, state):
+#     try:
+#         # Получить список файлов фотографий
+#         photo_list = os.listdir('UserFiles/Photos')
+#         data = await state.get_data()
+#         photo_descriptions = data['descriptions']
+#
+#         for photo_id, photo_description in photo_descriptions.items():
+#
+#             with open(photo_id, 'rb') as photo:
+#                 await message.answer_photo(photo, caption='📸 Твоя обработанная фотография.')
+#
+#         # Удалить все файлы фотографий
+#         for photo in photo_list:
+#             os.remove(f'UserFiles/Photos/{photo}')
+#
+#         # Сообщение об успешной обработке
+#         await message.answer('✅ Все фотографии успешно обработаны!', reply_markup=start_kb)
+#
+#     except Unauthorized:
+#         # Сообщение об ошибке авторизации
+#         await message.answer('🚫 У меня нет разрешения на доступ к твоим фото. Попробуй переустановить бота.')
+#
+#     finally:
+#         # Переход в начальное состояние
+#         await state.finish()
 
 
 if __name__ == '__main__':
     os.makedirs('UserFiles/Photos', exist_ok=True)
-    # Запуск long-polling
+    album_middleware = AlbumMiddleware()
+    dp.middleware.setup(album_middleware)
     executor.start_polling(dp, skip_updates=True)

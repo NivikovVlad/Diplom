@@ -1,5 +1,6 @@
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
 
+
 start_kb = ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton(text='Загрузить фото')],
@@ -10,36 +11,17 @@ start_kb = ReplyKeyboardMarkup(
 
 next_kb = ReplyKeyboardMarkup(
     keyboard=[
-        [KeyboardButton(text='Обработать')],
+        [KeyboardButton(text='Продолжить')],
     ],
     resize_keyboard=True
 )
 
-shop_kb = InlineKeyboardMarkup(
+card_type_kb = InlineKeyboardMarkup(
     inline_keyboard=[
-        [InlineKeyboardButton(text='Завтрак', callback_data='product_buying'),
-         InlineKeyboardButton(text='Обед', callback_data='product_buying'),
-         InlineKeyboardButton(text='Ужин', callback_data='product_buying'),
-         InlineKeyboardButton(text='Комплекс', callback_data='product_buying'),
-         InlineKeyboardButton(text='Назад', callback_data='back_to_main_menu')]
-    ],
-    resize_keyboard=True
-)
-
-# by_kb = InlineKeyboardMarkup(
-#     inline_keyboard=[
-#         [InlineKeyboardButton(text='Купить', callback_data='buy')],
-#         [InlineKeyboardButton(text='Назад', callback_data='back_to_shop')]
-#     ],
-#     resize_keyboard=True
-# )
-
-
-calc_kb = InlineKeyboardMarkup(
-    inline_keyboard=[
-        [InlineKeyboardButton(text='', callback_data='calories')],
-        [InlineKeyboardButton(text='Формулы расчёта', callback_data='formulas')],
-        [InlineKeyboardButton(text='Назад', callback_data='back_to_start')]
+        [
+            InlineKeyboardButton(text='Love is...', callback_data='love_is'),
+            InlineKeyboardButton(text='Friend is...', callback_data='friend_is'),
+        ]
     ],
     resize_keyboard=True
 )
