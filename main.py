@@ -4,16 +4,13 @@ from __future__ import annotations
 import asyncio
 import os
 from pprint import pprint
-from typing import Union, List
 import aiogram.utils.markdown as md
 from aiogram import Bot, Dispatcher, types
 from aiogram.contrib.fsm_storage.memory import MemoryStorage
 from aiogram.dispatcher.filters.state import State, StatesGroup
 from aiogram.dispatcher.handler import CancelHandler
 from aiogram.dispatcher.middlewares import BaseMiddleware
-from aiogram.types import InputMedia
 from aiogram.utils import executor
-from aiogram.utils.exceptions import Unauthorized
 import process_photo
 from api_key import api
 from keyboards import *
@@ -24,6 +21,7 @@ dp = Dispatcher(bot, storage=MemoryStorage())
 
 
 class PhotoState(StatesGroup):
+    waiting_for_description_check = State()
     waiting_for_description = State()
     photos = State()
     type_card = State()
@@ -90,7 +88,7 @@ async def get_message(message: types.Message, album: list[types.Message] = None,
             else:
                 await file.photo[-1].download(file_path)
             media_group.attach(types.InputMedia(media=file_id, type=file.content_type))
-            # media_group.attach({"file": file_id, "type": file.content_type})
+
         except ValueError:
             return await message.answer("Что-то пошло не так...")
 
@@ -127,8 +125,8 @@ async def request_descriptions(message: types.Message, state):
         photos.media.remove(photos.media[0])
         await state.update_data(photos=photos)
         await PhotoState.descriptions.set()
-        desc = await send_photo(message, first_photo)
-        descriptions.append(desc)
+        await send_photo(message, first_photo)
+        # descriptions.append(desc)
     else:
         await message.answer('🚫 Нет фотографий для обработки.')
     await state.update_data(descriptions=descriptions)
@@ -141,14 +139,14 @@ async def send_photo(message: types.Message, photo: str):
         await message.answer_photo(img, caption='Напиши подпись для этого фото')
 
     # Запрашиваем подтверждение для продолжения
-    await message.answer('Хотите продолжить? (да/нет)', reply_markup=types.ReplyKeyboardMarkup(
-        keyboard=[
-            [types.KeyboardButton(text='Да')],
-            [types.KeyboardButton(text='Нет')]
-        ],
-        resize_keyboard=True,
-        one_time_keyboard=True
-    ))
+    # await message.answer('Хотите продолжить? (да/нет)', reply_markup=types.ReplyKeyboardMarkup(
+    #     keyboard=[
+    #         [types.KeyboardButton(text='Да')],
+    #         [types.KeyboardButton(text='Нет')]
+    #     ],
+    #     resize_keyboard=True,
+    #     one_time_keyboard=True
+    # ))
 
     # Сохраняем текущее состояние
     # data = await state.get_data()
@@ -156,29 +154,23 @@ async def send_photo(message: types.Message, photo: str):
     # await state.update_data(current_photos=current_photos)
 
 
-@dp.message_handler(lambda message: message.text in ['Да', 'Нет'], state=PhotoState.waiting_for_description)
+@dp.message_handler(state=PhotoState.waiting_for_description)
 async def process_confirmation(message: types.Message, state):
     data = await state.get_data()
     current_photos = data.get('photos', [])
-    print(current_photos)
 
-    if message.text == 'Да':
-        # Удаляем первую фотографию из списка и отправляем следующую
-
-        if current_photos.media:
-            next_photo = current_photos.media[0]['media']
-            current_photos.media.remove(current_photos.media[0])
-            # next_photo = current_photos.media[0]['media']
-            await state.update_data(photos=current_photos)
-            await send_photo(message, next_photo)
-
-        else:
-            await message.answer('🚫 Все фотографии были обработаны.')
-            await state.finish()  # Завершаем состояние
+    if current_photos.media:
+        next_photo = current_photos.media[0]['media']
+        current_photos.media.remove(current_photos.media[0])
         # next_photo = current_photos.media[0]['media']
+        await state.update_data(photos=current_photos)
+        await state.update_data(descriptions={next_photo: message.text})
+        await send_photo(message, next_photo)
 
     else:
-        await message.answer('✅ Обработка завершена.')
+        await message.answer('🚫 Все фотографии были обработаны.', reply_markup=start_kb)
+        data = await state.get_data()
+        print(data['descriptions'])
         await state.finish()  # Завершаем состояние
 
 
