@@ -25,3 +25,11 @@ card_type_kb = InlineKeyboardMarkup(
     ],
     resize_keyboard=True
 )
+
+
+proc_kb = ReplyKeyboardMarkup(
+    keyboard=[
+        [KeyboardButton(text='Обработать')],
+    ],
+    resize_keyboard=True
+)

@@ -20,6 +20,10 @@ bot = Bot(token=bot_token)
 dp = Dispatcher(bot, storage=MemoryStorage())
 
 
+class PhotoDescription:
+    description = []
+
+
 class PhotoState(StatesGroup):
     waiting_for_description_check = State()
     waiting_for_description = State()
@@ -27,6 +31,7 @@ class PhotoState(StatesGroup):
     type_card = State()
     descriptions = State()
     process = State()
+    last = State()
 
 
 class AlbumMiddleware(BaseMiddleware):
@@ -119,22 +124,25 @@ async def request_descriptions(message: types.Message, state):
     data = await state.get_data()
     photos = data['photos']
     if photos:
+        if len(photos.media) == 1:
+            is_last = True
+        else:
+            is_last = False
         first_photo = photos.media[0]['media']
         photos.media.remove(photos.media[0])
         await state.update_data(photos=photos)
         await PhotoState.descriptions.set()
-        await send_photo(message, first_photo)
+        await send_photo(message, first_photo, is_last, state)
     else:
         await message.answer('🚫 Нет фотографий для обработки.')
-    # await state.update_data(descriptions=desc)
-    # data = await state.get_data()
-    # print(data['descriptions'])
 
 
-async def send_photo(message: types.Message, photo: str):
+async def send_photo(message: types.Message, photo: str, is_last: bool, state, file_id: str = None):
     await PhotoState.waiting_for_description.set()
 
     file_path = f'UserFiles/Photos/{photo}.jpg'
+    if is_last:
+        await state.update_data(last=photo)
     with open(file_path, 'rb') as img:
         await message.answer_photo(img, caption='Напиши подпись для этого фото')
 
@@ -156,58 +164,73 @@ async def send_photo(message: types.Message, photo: str):
 
 @dp.message_handler(state=PhotoState.waiting_for_description)
 async def process_confirmation(message: types.Message, state):
+
     data = await state.get_data()
     current_photos = data.get('photos', [])
     desc = {}
+    last = data.get('last')
+
+    if last:
+        desc[last] = message.text
+        PhotoDescription.description.append(desc)
 
     if current_photos.media:
+        if len(current_photos.media) == 1:
+            is_last = True
+
+        else:
+            is_last = False
 
         next_photo = current_photos.media[0]['media']
         current_photos.media.remove(current_photos.media[0])
         desc[next_photo] = message.text
-
-        print(f'next_photo {next_photo}')
-        print(f'message.text {message.text}')
-        print(f'desc {desc}')
+        PhotoDescription.description.append(desc)
 
         await state.update_data(photos=current_photos)
-        # await state.update_data(descriptions=descriptions)
-        await send_photo(message, next_photo)
+        # await state.update_data(descriptions=descriptions.append(desc))
+        await send_photo(message, next_photo, is_last, state)
 
     else:
-        await message.answer('🚫 Все фотографии были обработаны.', reply_markup=start_kb)
+        await message.answer('Фото готовы к обработке', reply_markup=proc_kb)
+        await state.update_data(descriptions=PhotoDescription.description)
+        # data = await state.get_data()
         # print(data['descriptions'])
 
-        await state.finish()  # Завершаем состояние
+        await PhotoState.process.set()
+        # await state.finish()  # Завершаем состояние
 
 
-# @dp.message_handler(text=['Обработать'], state=PhotoState.process)
-# async def check(message: types.Message, state):
-#     try:
-#         # Получить список файлов фотографий
-#         photo_list = os.listdir('UserFiles/Photos')
-#         data = await state.get_data()
-#         photo_descriptions = data['descriptions']
-#
-#         for photo_id, photo_description in photo_descriptions.items():
-#
-#             with open(photo_id, 'rb') as photo:
-#                 await message.answer_photo(photo, caption='📸 Твоя обработанная фотография.')
-#
-#         # Удалить все файлы фотографий
-#         for photo in photo_list:
-#             os.remove(f'UserFiles/Photos/{photo}')
-#
-#         # Сообщение об успешной обработке
-#         await message.answer('✅ Все фотографии успешно обработаны!', reply_markup=start_kb)
-#
-#     except Unauthorized:
-#         # Сообщение об ошибке авторизации
-#         await message.answer('🚫 У меня нет разрешения на доступ к твоим фото. Попробуй переустановить бота.')
-#
-#     finally:
-#         # Переход в начальное состояние
-#         await state.finish()
+@dp.message_handler(text=['Обработать'], state=PhotoState.process)
+async def check(message: types.Message, state):
+    # try:
+    # Получить список файлов фотографий
+    photo_list = os.listdir('UserFiles/Photos')
+    data = await state.get_data()
+    photo_descriptions = data['descriptions']
+
+    for i in range(0, len(photo_descriptions)):
+        for photo_id, photo_description in photo_descriptions[i].items():
+
+            process_photo.add_caption(f'UserFiles/Photos/{photo_id}.jpg', photo_description)
+
+            with open(f'UserFiles/Photos/{photo_id}.jpg', 'rb') as photo:
+                await message.answer_photo(photo, caption='📸 Твоя обработанная фотография.')
+
+        # Удалить все файлы фотографий
+    for photo in photo_list:
+        os.remove(f'UserFiles/Photos/{photo}')
+
+        # Сообщение об успешной обработке
+    await message.answer('✅ Все фотографии успешно обработаны!', reply_markup=start_kb)
+
+    # except Exception as exc:
+    #
+    #     # Сообщение об ошибке авторизации
+    #     await message.answer(str(exc))
+
+    # finally:
+        # Переход в начальное состояние
+    await state.finish()
 
 
 if __name__ == '__main__':
